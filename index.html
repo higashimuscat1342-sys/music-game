@@ -36,7 +36,7 @@ canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
 <div id="sa"></div>
 <div id="overlay"><div id="card">
   <div id="title">OVERCLOCKED</div>
-  <div id="sub">ノーツが下のラインに重なる瞬間に、そのレーンをタップ。<br>複数の指で同時に押せます。（PC: Z X C V B）</div>
+  <div id="sub">シンプルな音ゲーです。<br>ノーツが下のラインに重なる瞬間に、そのレーンをタップ。<br>複数の指で同時に押せます。（PC: Z X C V B）</div>
   <div class="lv" id="lv">
     <button data-l="easy">EASY</button><button data-l="normal" class="on">NORMAL</button><button data-l="hard">HARD</button>
   </div>
@@ -55,8 +55,8 @@ canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
   // irr: 拍の間隔に掛ける倍率をランダムに選ぶ（不規則な譜面になる）／chord: 同時押しノーツの出現率
   const MAX_HP = 10;   // 全難易度共通
   const LEVELS = {
-    easy:   {keys:4, bpm:100, fall:1500, goal:80,  irr:[1],                                  chord:0},
-    normal: {keys:4, bpm:140, fall:1200, goal:130, irr:[1, 1, 0.5, 1.5, 0.75],              chord:0},
+    easy:   {keys:4, bpm:140, fall:1500, goal:80,  irr:[1],                                  chord:0},
+    normal: {keys:5, bpm:180, fall:1200, goal:150, irr:[1, 1, 0.5, 1.5, 0.75],              chord:0},
     hard:   {keys:5, bpm:210, fall:700,  goal:200, irr:[0.5, 0.5, 0.75, 1, 0.5, 1.5, 0.6, 2, 0.5], chord:0.15},
   };
   // index.html と同じフォルダに置く。ゲーム開始のたびにランダムで1曲選ばれる
