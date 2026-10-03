@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
 <style>
-:root{--bg:#04060e;--text:#d8f6ff;--cyan:#00f0ff;--mag:#ff2bd6;--sat:env(safe-area-inset-top,0px)}
+:root{--bg:#04060e;--text:#d8f6ff;--cyan:#00f0ff;--mag:#ff2bd6}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none}
 [hidden]{display:none!important}
 html,body{margin:0;width:100%;height:100%;overflow:hidden;overscroll-behavior:none;color:var(--text);background:var(--bg);
@@ -52,52 +52,38 @@ canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
     {sym:"■", color:"#39ff88"},
     {sym:"✚", color:"#9d6bff"},
   ];
+  // irr: 拍の間隔に掛ける倍率をランダムに選ぶ（不規則な譜面になる）／chord: 同時押しノーツの出現率
+  const MAX_HP = 10;   // 全難易度共通
   const LEVELS = {
-    easy:   {hp:8, keys:4, bpm:100, fall:1500, goal:80},
-    normal: {hp:8, keys:4, bpm:140, fall:1200, goal:130},
-    hard:   {hp:8, keys:5, bpm:190, fall:850,  goal:200},
+    easy:   {keys:4, bpm:100, fall:1500, goal:80,  irr:[1],                                  chord:0},
+    normal: {keys:4, bpm:140, fall:1200, goal:130, irr:[1, 1, 0.5, 1.5, 0.75],              chord:0},
+    hard:   {keys:5, bpm:210, fall:700,  goal:200, irr:[0.5, 0.5, 0.75, 1, 0.5, 1.5, 0.6, 2, 0.5], chord:0.15},
   };
   // index.html と同じフォルダに置く。ゲーム開始のたびにランダムで1曲選ばれる
   const BGM_FILES = ["Overclocked.mp3", "Music1.mp3", "Music2.mp3", "Music3.mp3", "Music4.mp3", "Music5.mp3"];
-  const PERFECT = 75, GOOD = 160, NEAR = 360;
+  const PERFECT = 70, GOOD = 150, NEAR = 340;
   const FONT = '"Orbitron","Hiragino Kaku Gothic ProN","Yu Gothic","Meiryo",sans-serif';
-  const FREQS = [523.25, 587.33, 659.25, 783.99, 880];
   const KEYS_PC = "zxcvb";
   const params = new URLSearchParams(location.search);
   let level = LEVELS[params.get("level")] ? params.get("level") : "normal";
 
-  let MAX_HP, KEYS, GOAL, BPM, FALL, INTERVAL, T0, USE, BASE_GOAL;
+  let KEYS, GOAL, BPM, FALL, INTERVAL, T0, USE, BASE_GOAL, IRR, CHORD;
   function setLevel(l){
     level = l; const P = LEVELS[l];
-    MAX_HP = P.hp; KEYS = P.keys; BASE_GOAL = GOAL = P.goal; BPM = P.bpm; FALL = P.fall;
+    KEYS = P.keys; BASE_GOAL = GOAL = P.goal; BPM = P.bpm; FALL = P.fall; IRR = P.irr; CHORD = P.chord;
     INTERVAL = 60000 / BPM; T0 = FALL + 600; USE = LANES.slice(0, KEYS);
   }
   setLevel(level);
 
-  // BGM（譜面とは同期させず、ゲーム開始と同時に再生）
+  // BGM（ゲーム開始と同時に再生。効果音・振動はなし）
   const bgm = new Audio();
-  bgm.preload = "auto"; bgm.volume = 0.85; bgm.loop = true;   // 曲が短くても目標数まで流れ続ける
+  bgm.preload = "auto"; bgm.volume = 0.85; bgm.loop = true;
   let lastBgm = -1;
   function pickBgm(){
     let i;
     do { i = Math.floor(Math.random() * BGM_FILES.length); } while (i === lastBgm && BGM_FILES.length > 1);
     lastBgm = i; return BGM_FILES[i];
   }
-
-  // 効果音
-  let actx = null;
-  function audioInit(){
-    try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); if (actx.state === "suspended") actx.resume(); } catch(e){}
-  }
-  function tone(f, d, type, v){
-  return;
-    if (!actx) return;
-    const o = actx.createOscillator(), g = actx.createGain(), t = actx.currentTime;
-    o.type = type; o.frequency.value = f;
-    g.gain.setValueAtTime(v, t); g.gain.exponentialRampToValueAtTime(0.001, t + d);
-    o.connect(g); g.connect(actx.destination); o.start(t); o.stop(t + d);
-  }
-  const vib = ms => { try { navigator.vibrate && navigator.vibrate(ms); } catch(e){} };
 
   const $ = id => document.getElementById(id);
   const cv = $("cv"), ctx = cv.getContext("2d"), ov = $("overlay");
@@ -108,7 +94,7 @@ canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
 
   let state = "idle";
   let hp = 0, score = 0, combo = 0, maxCombo = 0, resolved = 0, spawned = 0, cnt = {p:0, g:0, m:0};
-  let notes = [], startT = 0, lastLane = -1, sameRun = 0;
+  let notes = [], startT = 0, lastLane = -1, sameRun = 0, nextT = 0;
   const flashes = [];
   let judge = {text:"", color:"#fff", at:0};
   let L = {};
@@ -135,9 +121,8 @@ canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
   function begin(){
     layout();
     hp = MAX_HP; score = 0; combo = 0; maxCombo = 0; resolved = 0; spawned = 0; notes = [];
-    cnt = {p:0, g:0, m:0}; lastLane = -1; sameRun = 0; GOAL = BASE_GOAL;
+    cnt = {p:0, g:0, m:0}; lastLane = -1; sameRun = 0; GOAL = BASE_GOAL; nextT = T0;
     judge = {text:"", color:"#fff", at:0};
-    audioInit();
     try { bgm.pause(); bgm.src = pickBgm(); bgm.currentTime = 0; bgm.play().catch(() => {}); } catch(e){}   // タップ操作内で再生
     ov.hidden = true;
     startT = performance.now();
@@ -156,7 +141,6 @@ canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
 
   function hurt(text, isNote){
     hp--; combo = 0; cnt.m++;
-    tone(140, 0.2, "sawtooth", 0.18); vib(60);
     if (isNote) resolved++;
     setJudge(text, "#ff3b5c");
     cv.classList.remove("shake"); void cv.offsetWidth; cv.classList.add("shake");
@@ -170,8 +154,6 @@ canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
   function press(i){
     if (i < 0 || i >= KEYS) return;
     flashes[i] = performance.now();
-    audioInit();
-    tone(FREQS[i], 0.1, "triangle", 0.2);
     if (state !== "play") return;
     const g = performance.now() - startT;
     let best = null, bd = 1e9;
@@ -185,8 +167,6 @@ canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
       score++; resolved++; combo++; maxCombo = Math.max(maxCombo, combo);
       const perfect = bd <= PERFECT;
       perfect ? cnt.p++ : cnt.g++;
-      if (perfect) tone(FREQS[i] * 2, 0.08, "sine", 0.1);
-      vib(12);
       setJudge(perfect ? "PERFECT" : "GOOD", perfect ? "#f5ff3b" : "#00f0ff");
     } else if (best && bd <= NEAR){
       notes.splice(notes.indexOf(best), 1);
@@ -197,15 +177,26 @@ canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
     checkClear();
   }
 
+  function pickLane(){
+    let lane = Math.floor(Math.random() * KEYS);
+    if (lane === lastLane && sameRun >= 2) lane = (lane + 1 + Math.floor(Math.random() * (KEYS - 1))) % KEYS;
+    sameRun = lane === lastLane ? sameRun + 1 : 1; lastLane = lane;
+    return lane;
+  }
+
   function update(g){
     while (spawned < GOAL){
-      const t = T0 + spawned * INTERVAL;
+      const t = nextT;
       if (t - g > FALL) break;
-      let lane = Math.floor(Math.random() * KEYS);
-      if (lane === lastLane && sameRun >= 2) lane = (lane + 1 + Math.floor(Math.random() * (KEYS - 1))) % KEYS;
-      sameRun = lane === lastLane ? sameRun + 1 : 1; lastLane = lane;
-      notes.push({lane, t});
-      spawned++;
+      const a = pickLane();
+      notes.push({lane:a, t}); spawned++;
+      // 同時押し（HARDのみ）
+      if (CHORD && spawned < GOAL && Math.random() < CHORD){
+        let b = Math.floor(Math.random() * KEYS);
+        if (b === a) b = (b + 1 + Math.floor(Math.random() * (KEYS - 1))) % KEYS;
+        notes.push({lane:b, t}); spawned++;
+      }
+      nextT += INTERVAL * IRR[Math.floor(Math.random() * IRR.length)];
     }
     for (let i = 0; i < notes.length; i++){
       if (g - notes[i].t > GOOD){
@@ -280,7 +271,7 @@ canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
     }
 
     // HUD
-    const hy = st + 14, bw = Math.min(26, (fieldW * .5) / MAX_HP);
+    const hy = st + 14, bw = Math.min(26, (fieldW * .55) / MAX_HP - 4);
     for (let i = 0; i < MAX_HP; i++){
       ctx.fillStyle = i < hp ? "#00f0ff" : "rgba(0,240,255,.15)";
       if (i < hp){ ctx.shadowColor = "#00f0ff"; ctx.shadowBlur = 8; }
@@ -289,7 +280,7 @@ canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
     ctx.textBaseline = "alphabetic"; ctx.textAlign = "right"; ctx.fillStyle = "#d8f6ff"; ctx.font = "700 16px " + FONT;
     ctx.fillText(score + " / " + GOAL, fx + fieldW - 10, hy + 12);
     ctx.textAlign = "left"; ctx.fillStyle = "#7fb4c6"; ctx.font = "700 12px " + FONT;
-    ctx.fillText(level.toUpperCase() + "  " + BPM + " BPM", fx + 10, hy + 36);
+    ctx.fillText(level.toUpperCase(), fx + 10, hy + 36);
 
     // 判定表示
     const a = 1 - (pn - judge.at) / 650;
