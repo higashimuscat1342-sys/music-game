@@ -53,12 +53,13 @@ canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
     {sym:"✚", color:"#9d6bff"},
   ];
   const LEVELS = {
-    easy:   {hp:7, keys:3, bpm:80,  fall:2100, goal:40},
-    normal: {hp:5, keys:4, bpm:110, fall:1700, goal:60},
-    hard:   {hp:4, keys:5, bpm:145, fall:1350, goal:80},
+    easy:   {hp:5, keys:4, bpm:100, fall:1500, goal:80},
+    normal: {hp:4, keys:4, bpm:140, fall:1200, goal:130},
+    hard:   {hp:3, keys:5, bpm:190, fall:850,  goal:200},
   };
-  const BGM_FILE = "Overclocked.mp3";      // index.html と同じフォルダに置く
-  const PERFECT = 90, GOOD = 180, NEAR = 400;
+  // index.html と同じフォルダに置く。ゲーム開始のたびにランダムで1曲選ばれる
+  const BGM_FILES = ["Overclocked.mp3", "Music1.mp3", "Music2.mp3", "Music3.mp3", "Music4.mp3", "Music5.mp3"];
+  const PERFECT = 75, GOOD = 160, NEAR = 360;
   const FONT = '"Orbitron","Hiragino Kaku Gothic ProN","Yu Gothic","Meiryo",sans-serif';
   const FREQS = [523.25, 587.33, 659.25, 783.99, 880];
   const KEYS_PC = "zxcvb";
@@ -74,9 +75,14 @@ canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
   setLevel(level);
 
   // BGM（譜面とは同期させず、ゲーム開始と同時に再生）
-  const bgm = new Audio(BGM_FILE);
-  bgm.preload = "auto"; bgm.volume = 0.85;
-  bgm.addEventListener("ended", () => { GOAL = spawned; checkClear(); });
+  const bgm = new Audio();
+  bgm.preload = "auto"; bgm.volume = 0.85; bgm.loop = true;   // 曲が短くても目標数まで流れ続ける
+  let lastBgm = -1;
+  function pickBgm(){
+    let i;
+    do { i = Math.floor(Math.random() * BGM_FILES.length); } while (i === lastBgm && BGM_FILES.length > 1);
+    lastBgm = i; return BGM_FILES[i];
+  }
 
   // 効果音
   let actx = null;
@@ -131,7 +137,7 @@ canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
     cnt = {p:0, g:0, m:0}; lastLane = -1; sameRun = 0; GOAL = BASE_GOAL;
     judge = {text:"", color:"#fff", at:0};
     audioInit();
-    try { bgm.pause(); bgm.currentTime = 0; bgm.play().catch(() => {}); } catch(e){}   // タップ操作内で再生
+    try { bgm.pause(); bgm.src = pickBgm(); bgm.currentTime = 0; bgm.play().catch(() => {}); } catch(e){}   // タップ操作内で再生
     ov.hidden = true;
     startT = performance.now();
     state = "play";
