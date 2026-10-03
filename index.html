@@ -90,6 +90,7 @@ canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
     try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); if (actx.state === "suspended") actx.resume(); } catch(e){}
   }
   function tone(f, d, type, v){
+  return;
     if (!actx) return;
     const o = actx.createOscillator(), g = actx.createGain(), t = actx.currentTime;
     o.type = type; o.frequency.value = f;
