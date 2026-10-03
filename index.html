@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>OVERCLOCKED</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#04060e;--text:#d8f6ff;--cyan:#00f0ff;--mag:#ff2bd6;--sat:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none}
+[hidden]{display:none!important}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;overscroll-behavior:none;color:var(--text);background:var(--bg);
+  font-family:"Orbitron","Hiragino Kaku Gothic ProN","Yu Gothic","Meiryo",sans-serif}
+canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none}
+#sa{position:fixed;top:0;left:0;width:0;height:0;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);visibility:hidden}
+.shake{animation:sh .25s}
+@keyframes sh{20%{transform:translateX(-8px)}40%{transform:translateX(8px)}60%{transform:translateX(-5px)}80%{transform:translateX(5px)}}
+#overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(4,6,14,.78);padding:16px}
+#card{width:min(100%,460px);padding:28px 20px;text-align:center;background:rgba(8,14,30,.95);border:1px solid var(--cyan);
+  clip-path:polygon(0 0,calc(100% - 22px) 0,100% 22px,100% 100%,22px 100%,0 calc(100% - 22px));
+  display:flex;flex-direction:column;gap:16px;align-items:center;box-shadow:0 0 30px rgba(0,240,255,.25) inset}
+#title{font-size:clamp(28px,9vw,44px);font-weight:900;letter-spacing:.06em;color:#fff;text-shadow:0 0 12px var(--cyan),3px 0 var(--mag)}
+#sub{font-size:14px;line-height:1.8;color:#9bc4d4;font-family:"Hiragino Kaku Gothic ProN","Yu Gothic","Meiryo",sans-serif}
+.lv{display:flex;gap:8px;width:100%}
+.lv button{flex:1;font:inherit;font-weight:700;font-size:14px;padding:12px 0;border:1px solid #2a5566;background:transparent;color:#7fb4c6;letter-spacing:.08em}
+.lv button.on{border-color:var(--cyan);color:#001015;background:var(--cyan);box-shadow:0 0 14px var(--cyan)}
+#start{width:100%;font:inherit;font-weight:900;font-size:20px;letter-spacing:.2em;padding:16px;border:1px solid var(--mag);color:#fff;
+  background:linear-gradient(90deg,rgba(255,43,214,.25),rgba(0,240,255,.25));box-shadow:0 0 18px rgba(255,43,214,.5)}
+#start:active{background:var(--mag)}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div id="sa"></div>
+<div id="overlay"><div id="card">
+  <div id="title">OVERCLOCKED</div>
+  <div id="sub">ノーツが下のラインに重なる瞬間に、そのレーンをタップ。<br>複数の指で同時に押せます。（PC: Z X C V B）</div>
+  <div class="lv" id="lv">
+    <button data-l="easy">EASY</button><button data-l="normal" class="on">NORMAL</button><button data-l="hard">HARD</button>
+  </div>
+  <button id="start">START</button>
+</div></div>
+
+<script>
+(() => {
+  const LANES = [
+    {sym:"▲", color:"#00f0ff"},
+    {sym:"◆", color:"#ff2bd6"},
+    {sym:"●", color:"#f5ff3b"},
+    {sym:"■", color:"#39ff88"},
+    {sym:"✚", color:"#9d6bff"},
+  ];
+  const LEVELS = {
+    easy:   {hp:7, keys:3, bpm:80,  fall:2100, goal:40},
+    normal: {hp:5, keys:4, bpm:110, fall:1700, goal:60},
+    hard:   {hp:4, keys:5, bpm:145, fall:1350, goal:80},
+  };
+  const BGM_FILE = "Overclocked.mp3";      // index.html と同じフォルダに置く
+  const PERFECT = 90, GOOD = 180, NEAR = 400;
+  const FONT = '"Orbitron","Hiragino Kaku Gothic ProN","Yu Gothic","Meiryo",sans-serif';
+  const FREQS = [523.25, 587.33, 659.25, 783.99, 880];
+  const KEYS_PC = "zxcvb";
+  const params = new URLSearchParams(location.search);
+  let level = LEVELS[params.get("level")] ? params.get("level") : "normal";
+
+  let MAX_HP, KEYS, GOAL, BPM, FALL, INTERVAL, T0, USE, BASE_GOAL;
+  function setLevel(l){
+    level = l; const P = LEVELS[l];
+    MAX_HP = P.hp; KEYS = P.keys; BASE_GOAL = GOAL = P.goal; BPM = P.bpm; FALL = P.fall;
+    INTERVAL = 60000 / BPM; T0 = FALL + 600; USE = LANES.slice(0, KEYS);
+  }
+  setLevel(level);
+
+  // BGM（譜面とは同期させず、ゲーム開始と同時に再生）
+  const bgm = new Audio(BGM_FILE);
+  bgm.preload = "auto"; bgm.volume = 0.85;
+  bgm.addEventListener("ended", () => { GOAL = spawned; checkClear(); });
+
+  // 効果音
+  let actx = null;
+  function audioInit(){
+    try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); if (actx.state === "suspended") actx.resume(); } catch(e){}
+  }
+  function tone(f, d, type, v){
+    if (!actx) return;
+    const o = actx.createOscillator(), g = actx.createGain(), t = actx.currentTime;
+    o.type = type; o.frequency.value = f;
+    g.gain.setValueAtTime(v, t); g.gain.exponentialRampToValueAtTime(0.001, t + d);
+    o.connect(g); g.connect(actx.destination); o.start(t); o.stop(t + d);
+  }
+  const vib = ms => { try { navigator.vibrate && navigator.vibrate(ms); } catch(e){} };
+
+  const $ = id => document.getElementById(id);
+  const cv = $("cv"), ctx = cv.getContext("2d"), ov = $("overlay");
+  const title = $("title"), sub = $("sub"), startBtn = $("start"), lvBox = $("lv"), sa = $("sa");
+  const markLevel = () => [...lvBox.children].forEach(b => b.classList.toggle("on", b.dataset.l === level));
+  markLevel();
+  lvBox.addEventListener("click", e => { const l = e.target.dataset && e.target.dataset.l; if (l){ setLevel(l); markLevel(); } });
+
+  let state = "idle";
+  let hp = 0, score = 0, combo = 0, maxCombo = 0, resolved = 0, spawned = 0, cnt = {p:0, g:0, m:0};
+  let notes = [], startT = 0, lastLane = -1, sameRun = 0;
+  const flashes = [];
+  let judge = {text:"", color:"#fff", at:0};
+  let L = {};
+
+  function layout(){
+    const dpr = window.devicePixelRatio || 1;
+    const W = window.innerWidth, H = window.innerHeight;
+    cv.width = W * dpr; cv.height = H * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const cs = getComputedStyle(sa);
+    const st = parseFloat(cs.paddingTop) || 0, sb = parseFloat(cs.paddingBottom) || 0;
+    const fieldW = Math.min(W, 520);
+    const topY = st + 70;
+    const padH = Math.max(110, Math.min(170, H * 0.2));
+    const bottom = H - sb - 8;
+    L = {W, H, fieldW, fx:(W - fieldW) / 2, laneW:fieldW / KEYS, topY, bottom, judgeY:bottom - padH, st};
+  }
+  window.addEventListener("resize", layout);
+  window.addEventListener("orientationchange", () => setTimeout(layout, 200));
+  layout();
+
+  const setJudge = (text, color) => { judge = {text, color, at:performance.now()}; };
+
+  function begin(){
+    layout();
+    hp = MAX_HP; score = 0; combo = 0; maxCombo = 0; resolved = 0; spawned = 0; notes = [];
+    cnt = {p:0, g:0, m:0}; lastLane = -1; sameRun = 0; GOAL = BASE_GOAL;
+    judge = {text:"", color:"#fff", at:0};
+    audioInit();
+    try { bgm.pause(); bgm.currentTime = 0; bgm.play().catch(() => {}); } catch(e){}   // タップ操作内で再生
+    ov.hidden = true;
+    startT = performance.now();
+    state = "play";
+  }
+
+  function finish(cleared){
+    state = "over";
+    try { bgm.pause(); } catch(e){}
+    title.textContent = cleared ? "CLEAR" : "GAME OVER";
+    sub.innerHTML = "HIT " + score + " / " + GOAL + "<br>PERFECT " + cnt.p + " ・ GOOD " + cnt.g + " ・ MISS " + cnt.m + "<br>MAX COMBO " + maxCombo;
+    startBtn.textContent = "RETRY";
+    lvBox.hidden = false;
+    ov.hidden = false;
+  }
+
+  function hurt(text, isNote){
+    hp--; combo = 0; cnt.m++;
+    tone(140, 0.2, "sawtooth", 0.18); vib(60);
+    if (isNote) resolved++;
+    setJudge(text, "#ff3b5c");
+    cv.classList.remove("shake"); void cv.offsetWidth; cv.classList.add("shake");
+    if (hp <= 0) finish(false);
+  }
+
+  function checkClear(){
+    if (state === "play" && resolved >= GOAL && hp > 0) finish(true);
+  }
+
+  function press(i){
+    if (i < 0 || i >= KEYS) return;
+    flashes[i] = performance.now();
+    audioInit();
+    tone(FREQS[i], 0.1, "triangle", 0.2);
+    if (state !== "play") return;
+    const g = performance.now() - startT;
+    let best = null, bd = 1e9;
+    for (const n of notes){
+      if (n.lane !== i) continue;
+      const d = Math.abs(n.t - g);
+      if (d < bd){ bd = d; best = n; }
+    }
+    if (best && bd <= GOOD){
+      notes.splice(notes.indexOf(best), 1);
+      score++; resolved++; combo++; maxCombo = Math.max(maxCombo, combo);
+      const perfect = bd <= PERFECT;
+      perfect ? cnt.p++ : cnt.g++;
+      if (perfect) tone(FREQS[i] * 2, 0.08, "sine", 0.1);
+      vib(12);
+      setJudge(perfect ? "PERFECT" : "GOOD", perfect ? "#f5ff3b" : "#00f0ff");
+    } else if (best && bd <= NEAR){
+      notes.splice(notes.indexOf(best), 1);
+      hurt("MISS", true);
+    } else {
+      hurt("MISTAP", false);
+    }
+    checkClear();
+  }
+
+  function update(g){
+    while (spawned < GOAL){
+      const t = T0 + spawned * INTERVAL;
+      if (t - g > FALL) break;
+      let lane = Math.floor(Math.random() * KEYS);
+      if (lane === lastLane && sameRun >= 2) lane = (lane + 1 + Math.floor(Math.random() * (KEYS - 1))) % KEYS;
+      sameRun = lane === lastLane ? sameRun + 1 : 1; lastLane = lane;
+      notes.push({lane, t});
+      spawned++;
+    }
+    for (let i = 0; i < notes.length; i++){
+      if (g - notes[i].t > GOOD){
+        notes.splice(i, 1); i--;
+        hurt("MISS", true);
+        if (state !== "play") return;
+      }
+    }
+    checkClear();
+  }
+
+  function draw(g, pn){
+    const {W, H, fieldW, fx, laneW, topY, judgeY, bottom, st} = L;
+    ctx.clearRect(0, 0, W, H);
+    ctx.shadowBlur = 0;
+
+    // 背景：流れるグリッド
+    const bg = ctx.createLinearGradient(0, 0, 0, H);
+    bg.addColorStop(0, "#04060e"); bg.addColorStop(1, "#140828");
+    ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = "rgba(0,240,255,.10)"; ctx.lineWidth = 1;
+    const off = (pn / 25) % 40;
+    for (let y = -40 + off; y < H; y += 40){ ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+    for (let x = fx % 40; x < W; x += 40){ ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
+
+    // フィールド
+    const fh = bottom - topY;
+    ctx.fillStyle = "rgba(4,8,20,.78)"; ctx.fillRect(fx, topY, fieldW, fh);
+    ctx.strokeStyle = "#00f0ff"; ctx.lineWidth = 2;
+    ctx.shadowColor = "#00f0ff"; ctx.shadowBlur = 10;
+    ctx.beginPath(); ctx.moveTo(fx, topY); ctx.lineTo(fx, bottom); ctx.moveTo(fx + fieldW, topY); ctx.lineTo(fx + fieldW, bottom); ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = "rgba(0,240,255,.25)"; ctx.lineWidth = 1;
+    for (let i = 1; i < KEYS; i++){ ctx.beginPath(); ctx.moveTo(fx + i * laneW, topY); ctx.lineTo(fx + i * laneW, bottom); ctx.stroke(); }
+
+    // 押した列の光
+    for (let i = 0; i < KEYS; i++){
+      const a = 1 - (pn - (flashes[i] || -1e9)) / 240;
+      if (a > 0){
+        const gr = ctx.createLinearGradient(0, topY, 0, judgeY);
+        gr.addColorStop(0, "rgba(0,0,0,0)"); gr.addColorStop(1, USE[i].color);
+        ctx.globalAlpha = a * .5; ctx.fillStyle = gr; ctx.fillRect(fx + i * laneW, topY, laneW, judgeY - topY); ctx.globalAlpha = 1;
+      }
+    }
+
+    // 判定ライン
+    ctx.strokeStyle = "#ff2bd6"; ctx.lineWidth = 3; ctx.shadowColor = "#ff2bd6"; ctx.shadowBlur = 14;
+    ctx.beginPath(); ctx.moveTo(fx, judgeY); ctx.lineTo(fx + fieldW, judgeY); ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    // タップパッド
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    const padTop = judgeY + 12, padH = bottom - padTop - 8;
+    for (let i = 0; i < KEYS; i++){
+      const down = pn - (flashes[i] || -1e9) < 120, x = fx + i * laneW + 5, w = laneW - 10;
+      ctx.fillStyle = down ? USE[i].color : "rgba(10,20,40,.9)"; ctx.fillRect(x, padTop, w, padH);
+      ctx.strokeStyle = USE[i].color; ctx.lineWidth = 2; ctx.strokeRect(x, padTop, w, padH);
+      ctx.fillStyle = down ? "#001015" : USE[i].color; ctx.font = "900 " + Math.min(38, laneW * .38) + "px " + FONT;
+      ctx.fillText(USE[i].sym, x + w / 2, padTop + padH / 2);
+    }
+
+    // ノーツ
+    const nh = Math.min(30, laneW * .34);
+    for (const n of notes){
+      const p = 1 - (n.t - g) / FALL;
+      const y = topY + (judgeY - topY) * p;
+      const lw = laneW * .84, x = fx + n.lane * laneW + laneW * .08, c = USE[n.lane].color;
+      ctx.shadowColor = c; ctx.shadowBlur = 16;
+      ctx.fillStyle = c; ctx.fillRect(x, y - nh / 2, lw, nh);
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = "#fff"; ctx.fillRect(x, y - 2, lw, 4);
+    }
+
+    // HUD
+    const hy = st + 14, bw = Math.min(26, (fieldW * .5) / MAX_HP);
+    for (let i = 0; i < MAX_HP; i++){
+      ctx.fillStyle = i < hp ? "#00f0ff" : "rgba(0,240,255,.15)";
+      if (i < hp){ ctx.shadowColor = "#00f0ff"; ctx.shadowBlur = 8; }
+      ctx.fillRect(fx + 10 + i * (bw + 4), hy, bw, 10); ctx.shadowBlur = 0;
+    }
+    ctx.textBaseline = "alphabetic"; ctx.textAlign = "right"; ctx.fillStyle = "#d8f6ff"; ctx.font = "700 16px " + FONT;
+    ctx.fillText(score + " / " + GOAL, fx + fieldW - 10, hy + 12);
+    ctx.textAlign = "left"; ctx.fillStyle = "#7fb4c6"; ctx.font = "700 12px " + FONT;
+    ctx.fillText(level.toUpperCase() + "  " + BPM + " BPM", fx + 10, hy + 36);
+
+    // 判定表示
+    const a = 1 - (pn - judge.at) / 650;
+    if (a > 0 && judge.text){
+      const cy = (topY + judgeY) / 2;
+      ctx.globalAlpha = a; ctx.textAlign = "center"; ctx.fillStyle = judge.color; ctx.shadowColor = judge.color; ctx.shadowBlur = 14;
+      ctx.font = "900 34px " + FONT; ctx.fillText(judge.text, W / 2, cy);
+      if (combo >= 2){ ctx.font = "700 18px " + FONT; ctx.fillText(combo + " COMBO", W / 2, cy + 30); }
+      ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+    }
+  }
+
+  function frame(){
+    requestAnimationFrame(frame);
+    const pn = performance.now(), g = pn - startT;
+    if (state === "play") update(g);
+    draw(g, pn);
+  }
+
+  cv.addEventListener("pointerdown", e => {
+    e.preventDefault();
+    const i = Math.floor((e.clientX - L.fx) / L.laneW);
+    if (e.clientX >= L.fx && i < KEYS) press(i);
+  });
+  window.addEventListener("keydown", e => {
+    if (e.repeat) return;
+    const i = KEYS_PC.indexOf(e.key.toLowerCase());
+    if (i >= 0) press(i);
+  });
+  document.addEventListener("contextmenu", e => e.preventDefault());
+  document.addEventListener("touchmove", e => e.preventDefault(), {passive:false});
+  startBtn.addEventListener("click", () => { lvBox.hidden = true; begin(); });
+  frame();
+})();
+</script>
+</body>
+</html>
